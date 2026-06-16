@@ -1,89 +1,96 @@
--- Защищенная инициализация игровых сервисов
+-- Сервисы игры
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
--- Настройки безопасной телепортации
+-- Настройки обхода античета
 local TP_Settings = {
     Active = true,
-    TimeTaken = 0.25 -- Время «полета» до точки клика (чем меньше, тем быстрее, но выше шанс детекта)
+    MaxStepDistance = 4.5, -- Длина одного микро-шага в студах (безопасно: от 3 до 5)
+    StepDelay = 0.015      -- Задержка между шагами в секундах (микро-пауза для обмана античета)
 }
 
--- Использование Drawing API для создания интерфейса (HUD) в обход ограничений среды
+-- Создание стабильного HUD с помощью Drawing API
 local function createTextLine(text, yOffset, color)
     if not Drawing then return nil end
     local textObject = Drawing.new("Text")
     textObject.Text = text
     textObject.Size = 18
-    textObject.Position = Vector2.new(40, 150 + yOffset)
+    textObject.Position = Vector2.new(40, 160 + yOffset)
     textObject.Color = color or Color3.fromRGB(255, 255, 255)
     textObject.Outline = true
     textObject.Visible = true
     return textObject
 end
 
--- Отрисовка элементов HUD прямо на экране поверх игры
 local UI_Elements = {}
-UI_Elements.Title = createTextLine("== CLICK TELEPORT MENU ==", 0, Color3.fromRGB(255, 215, 0))
-UI_Elements.Status = createTextLine("Статус ТП по клику: ВКЛЮЧЕН", 25, Color3.fromRGB(50, 205, 50))
-UI_Elements.Instruction = createTextLine("Управление: Нажми [Ctrl + Клик Мыши] для ТП", 50, Color3.fromRGB(200, 200, 200))
-UI_Elements.UnloadText = createTextLine("Нажми клавишу [X] для полной выгрузки чита", 75, Color3.fromRGB(220, 20, 60))
+UI_Elements.Title = createTextLine("== BYPASS CLICK TP MENU ==", 0, Color3.fromRGB(255, 140, 0))
+UI_Elements.Status = createTextLine("Телепорт (Микро-шаги): РАБОТАЕТ", 25, Color3.fromRGB(0, 255, 127))
+UI_Elements.Instruction = createTextLine("Управление: [Ctrl + Клик Мыши] по карте", 50, Color3.fromRGB(220, 220, 220))
+UI_Elements.UnloadText = createTextLine("Нажми [X] для выгрузки и удаления меню", 75, Color3.fromRGB(255, 69, 0))
 
--- Основная логика безопасного перемещения по клику мыши
-local function TeleportToMouse()
-    if not TP_Settings.Active then return end
-    
+-- Функция продвинутого обхода анти-телепорта
+local function BypassTeleport(targetPosition)
     local Character = LocalPlayer.Character
     local HRP = Character and Character:FindFirstChild("HumanoidRootPart")
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
     
-    -- Проверяем, жив ли персонаж и куда указывает курсор мыши
-    if HRP and Humanoid and Humanoid.Health > 0 and Mouse.Hit then
-        -- Целевая координата (поднимаем на 3 студа вверх, чтобы не застрять в текстурах пола)
-        local targetCFrame = CFrame.new(Mouse.Hit.Position + Vector3.new(0, 3, 0))
+    if not HRP or not Humanoid or Humanoid.Health <= 0 then return end
+    
+    -- Временно переводим персонажа в режим физики, чтобы отключить проверки падения
+    Humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    
+    -- Конечная точка назначения (приподнимаем, чтобы не застрять в земле)
+    local finalPos = targetPosition + Vector3.new(0, 3, 0)
+    
+    -- Цикл нарезки расстояния на разрешенные сервером отрезки
+    while (HRP.Position - finalPos).Magnitude > TP_Settings.MaxStepDistance and TP_Settings.Active do
+        -- Вычисляем направление к цели
+        local direction = (finalPos - HRP.Position).Unit
+        -- Рассчитываем координату следующего безопасного микро-шага
+        local nextPosition = HRP.Position + (direction * TP_Settings.MaxStepDistance)
         
-        -- Плавное перемещение (Tweening) для обхода серверного античита
-        local tweenInfo = TweenInfo.new(TP_Settings.TimeTaken, Enum.EasingStyle.Linear)
-        local tween = TweenService:Create(HRP, tweenInfo, {CFrame = targetCFrame})
+        -- Сдвигаем CFrame персонажа на один шаг, сохраняя направление его взгляда
+        HRP.CFrame = CFrame.new(nextPosition, nextPosition + HRP.CFrame.LookVector)
         
-        -- Переводим гуманоида в режим физики, отключая проверки на падение/бег
-        Humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-        
-        tween:Play()
-        tween.Completed:Wait()
-        
-        -- Возвращаем исходное состояние движения персонажа
-        Humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        -- КРИТИЧЕСКИ ВАЖНО: Обязательная пауза, чтобы сервер успел зафиксировать шаг и не вернул назад
+        task.wait(TP_Settings.StepDelay)
     end
+    
+    -- Финальный микро-телепорт точно в цель (когда расстояние осталось меньше шага)
+    if TP_Settings.Active then
+        HRP.CFrame = CFrame.new(finalPos, finalPos + HRP.CFrame.LookVector)
+    end
+    
+    -- Возвращаем персонажу обычное состояние бега
+    Humanoid:ChangeState(Enum.HumanoidStateType.Running)
 end
 
--- Обработка системных нажатий
+-- Обработка горячих клавиш и мыши
 local InputConnection
 InputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    -- Если вы печатаете текст в игровом чате, чит игнорирует нажатия
     if gameProcessed then return end
     
-    -- Проверка комбинации: Нажат левый или правый Ctrl + Клик левой кнопкой мыши
+    -- Клик мыши при зажатом Ctrl
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl) then
-            task.spawn(TeleportToMouse)
+            if Mouse.Hit then
+                -- Запускаем ТП в отдельном потоке
+                task.spawn(BypassTeleport, Mouse.Hit.Position)
+            end
         end
     end
     
-    -- Полная выгрузка скрипта по нажатию на клавишу X
+    -- Выгрузка чита (Клавиша X)
     if input.KeyCode == Enum.KeyCode.X then
-        if InputConnection then InputConnection:Disconnect() end
         TP_Settings.Active = false
+        if InputConnection then InputConnection:Disconnect() end
         
-        -- Полностью стираем текстовый HUD с экрана
+        -- Удаление HUD меню с экрана
         for _, element in pairs(UI_Elements) do
             if element then element:Destroy() end
         end
-        print("[Чит полностью выгружен из памяти]")
+        print("[Чит полностью выгружен]")
     end
 end)
-
-print("[Скрипт готов к работе. Используйте Ctrl + ЛКМ для перемещения]")
