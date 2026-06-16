@@ -7,7 +7,7 @@ local TP_Settings = {
     Active = true
 }
 
--- Стабильный HUD через Drawing API в обход ошибок nil
+-- Стабильный HUD через Drawing API
 local function createTextLine(text, yOffset, color)
     if not Drawing then return nil end
     local textObject = Drawing.new("Text")
@@ -21,69 +21,61 @@ local function createTextLine(text, yOffset, color)
 end
 
 local UI_Elements = {}
-UI_Elements.Title = createTextLine("== SEAT METHOD CLICK TP ==", 0, Color3.fromRGB(138, 43, 226))
-UI_Elements.Status = createTextLine("Метод: Обход через Seat-Glitches", 25, Color3.fromRGB(0, 255, 0))
-UI_Elements.Instruction = createTextLine("Управление: [Ctrl + Клик Мыши] по карте", 50, Color3.fromRGB(240, 240, 240))
+UI_Elements.Title = createTextLine("== SEAT-GLITCH CLICK TP ==", 0, Color3.fromRGB(255, 105, 180))
+UI_Elements.Status = createTextLine("Обход античета: АКТИВИРОВАН", 25, Color3.fromRGB(0, 255, 255))
+UI_Elements.Instruction = createTextLine("Управление: [Ctrl + Клик Мыши]", 50, Color3.fromRGB(240, 240, 240))
 UI_Elements.UnloadText = createTextLine("Нажми [X] для выгрузки чита", 75, Color3.fromRGB(255, 0, 50))
 
--- Основная функция ТП через создание сидения
-local function SeatTeleport(targetPos)
+-- Функция ТП со встроенным сбросом проверок античета
+local function GlitchTeleport(targetPos)
     local Character = LocalPlayer.Character
     local HRP = Character and Character:FindFirstChild("HumanoidRootPart")
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
     
     if not HRP or not Humanoid or Humanoid.Health <= 0 then return end
     
-    -- Создаем временное невидимое сидение
-    local TempSeat = Instance.new("Seat")
-    TempSeat.Size = Vector3.new(1, 1, 1)
-    TempSeat.Transparency = 1
-    TempSeat.CanCollide = false
-    TempSeat.Anchored = true
-    -- Спавним его прямо под персонажем
-    TempSeat.CFrame = HRP.CFrame
-    TempSeat.Parent = workspace
+    -- 1. Создаем невидимый фантомный стул под ногами для баггинга сети
+    local FakeSeat = Instance.new("Seat")
+    FakeSeat.Size = Vector3.new(0.5, 0.5, 0.5)
+    FakeSeat.Transparency = 1
+    FakeSeat.CanCollide = false
+    FakeSeat.Anchored = true
+    FakeSeat.CFrame = HRP.CFrame
+    FakeSeat.Parent = workspace
     
-    -- Принудительно сажаем персонажа (сервер одобряет это действие)
-    TempSeat:Sit(Humanoid)
+    -- 2. Сажаем персонажа, ломая серверную проверку расстояния
+    FakeSeat:Sit(Humanoid)
+    task.wait(0.03) -- Микро-пауза для фиксации бага сервером
     
-    -- Микро-пауза, чтобы сервер зафиксировал посадку
-    task.wait(0.05)
-    
-    if TP_Settings.Active and TempSeat.Parent then
-        -- Перемещаем само СИДЕНИЕ в точку назначения (приподняв над землей)
+    if TP_Settings.Active then
+        -- 3. Мгновенно перемещаем персонажа в точку клика (чуть выше земли)
         local finalPos = targetPos + Vector3.new(0, 3, 0)
-        TempSeat.CFrame = CFrame.new(finalPos)
+        HRP.CFrame = CFrame.new(finalPos)
         
-        -- Даем серверу долю секунды обновить позицию сидения вместе с нами
-        task.wait(0.05)
-        
-        -- Заставляем персонажа прыгнуть, чтобы встать со стула
-        Humanoid.Jump = true
-        
-        -- Уничтожаем временное сидение, стирая следы
+        -- 4. Сбрасываем состояние сидения, заставляя персонажа встать в новой точке
         task.wait(0.02)
-        TempSeat:Destroy()
-    else
-        TempSeat:Destroy()
+        Humanoid.Jump = true
     end
+    
+    -- Удаляем стул из игры
+    FakeSeat:Destroy()
 end
 
--- Обработка клавиш
+-- Обработка кликов
 local InputConnection
 InputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
-    -- Ctrl + ЛКМ
+    -- Проверка Ctrl + ЛКМ
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl) then
             if Mouse.Hit then
-                task.spawn(SeatTeleport, Mouse.Hit.Position)
+                task.spawn(GlitchTeleport, Mouse.Hit.Position)
             end
         end
     end
     
-    -- Выгрузка чита (Клавиша X)
+    -- Выгрузка чита
     if input.KeyCode == Enum.KeyCode.X then
         TP_Settings.Active = false
         if InputConnection then InputConnection:Disconnect() end
@@ -91,6 +83,6 @@ InputConnection = UserInputService.InputBegan:Connect(function(input, gameProces
         for _, element in pairs(UI_Elements) do
             if element then element:Destroy() end
         end
-        print("[Чит полностью выгружен]")
+        print("[Чит выгружен]")
     end
 end)
