@@ -4,7 +4,8 @@ local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
 local TP_Settings = {
-    Active = true
+    Active = true,
+    TargetPos = nil
 }
 
 -- Стабильный HUD через Drawing API
@@ -21,82 +22,59 @@ local function createTextLine(text, yOffset, color)
 end
 
 local UI_Elements = {}
-UI_Elements.Title = createTextLine("== MAP SEAT CLICK TP ==", 0, Color3.fromRGB(255, 165, 0))
-UI_Elements.Status = createTextLine("Использует готовые стулья карты", 25, Color3.fromRGB(0, 255, 255))
-UI_Elements.Instruction = createTextLine("Инструкция: Сядьте на любой стул -> Нажмите Ctrl + Клик", 50, Color3.fromRGB(240, 240, 240))
+UI_Elements.Title = createTextLine("== SPAWN GLITCH CLICK TP ==", 0, Color3.fromRGB(255, 0, 255))
+UI_Elements.Status = createTextLine("Метод: Подмена координат респавна", 25, Color3.fromRGB(0, 255, 0))
+UI_Elements.Instruction = createTextLine("Управление: [Ctrl + Клик Мыши] по карте", 50, Color3.fromRGB(240, 240, 240))
 UI_Elements.UnloadText = createTextLine("Нажми [X] для выгрузки чита", 75, Color3.fromRGB(255, 0, 50))
 
--- Функция поиска ближайшего сидения на карте
-local function findNearestSeat()
-    local Character = LocalPlayer.Character
-    local HRP = Character and Character:FindFirstChild("HumanoidRootPart")
-    if not HRP then return nil end
-    
-    local nearestSeat = nil
-    local shortestDistance = math.huge
-    
-    -- Сканируем всю карту на наличие стандартных сидений
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("Seat") or obj:IsA("VehicleSeat") then
-            local distance = (obj.Position - HRP.Position).Magnitude
-            if distance < shortestDistance then
-                shortestDistance = distance
-                nearestSeat = obj
-            end
+-- Поток отслеживания респавна персонажа
+local SpawnConnection
+SpawnConnection = LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+    if TP_Settings.Active and TP_Settings.TargetPos then
+        -- Как только сервер создает новое тело, мгновенно перехватываем контроль
+        local HRP = newCharacter:WaitForChild("HumanoidRootPart", 5)
+        if HRP then
+            -- Сдвигаем CFrame спавна в точку нашего клика до того, как античит проснется
+            task.wait(0.02)
+            HRP.CFrame = CFrame.new(TP_Settings.TargetPos + Vector3.new(0, 4, 0))
+            TP_Settings.TargetPos = nil -- Сбрасываем цель после успешного ТП
         end
     end
-    return nearestSeat
-end
+end)
 
--- Функция телепортации
-local function MapSeatTeleport(targetPos)
+-- Основная функция триггера ТП
+local function TriggerSpawnTP(clickPosition)
     local Character = LocalPlayer.Character
-    local HRP = Character and Character:FindFirstChild("HumanoidRootPart")
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
     
-    if not HRP or not Humanoid or Humanoid.Health <= 0 then return end
-    
-    -- Проверяем: сидит ли игрок уже. Если нет — ищем ближайший стул в радиусе 10 метров и сажаем
-    if Humanoid.SeatPart == nil then
-        local targetSeat = findNearestSeat()
-        if targetSeat and (targetSeat.Position - HRP.Position).Magnitude < 10 then
-            targetSeat:Sit(Humanoid)
-            task.wait(0.1) -- Ждем посадки
-        else
-            print("[Внимание] Для обхода античета сначала сядьте на любой стул/машину на карте!")
-            return
-        end
-    end
-    
-    -- Если мы успешно сидим на легитимном стуле карты:
-    if Humanoid.SeatPart and TP_Settings.Active then
-        -- Мгновенно переносим персонажа в точку клика мыши
-        local finalPos = targetPos + Vector3.new(0, 3, 0)
-        HRP.CFrame = CFrame.new(finalPos)
+    if Character and Humanoid and Humanoid.Health > 0 then
+        -- Запоминаем точку, куда кликнули
+        TP_Settings.TargetPos = clickPosition
         
-        -- Сбрасываем сидение (заставляем персонажа встать/выпрыгнуть в новой точке)
-        task.wait(0.02)
-        Humanoid.Jump = true
+        -- Мгновенно ломаем связи персонажа (вызываем респавн на сервере)
+        Character:BreakJoints()
     end
 end
 
 -- Обработка кликов (Ctrl + ЛКМ)
 local InputConnection
 InputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    -- Игнорируем, если игрок пишет в чат
     if gameProcessed then return end
     
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl) then
             if Mouse.Hit then
-                task.spawn(MapSeatTeleport, Mouse.Hit.Position)
+                task.spawn(TriggerSpawnTP, Mouse.Hit.Position)
             end
         end
     end
     
-    -- Выгрузка чита (Клавиша X)
+    -- Полная выгрузка чита (Клавиша X)
     if input.KeyCode == Enum.KeyCode.X then
         TP_Settings.Active = false
         if InputConnection then InputConnection:Disconnect() end
+        if SpawnConnection then SpawnConnection:Disconnect() end
         
         for _, element in pairs(UI_Elements) do
             if element then element:Destroy() end
