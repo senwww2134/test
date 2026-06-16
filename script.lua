@@ -21,7 +21,7 @@ ScreenGui.Parent = CoreGui
 -- Главное окно
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UUDim2.new(0, 200, 0, 250)
+MainFrame.Size = UDim2.new(0, 200, 0, 250) -- Ошибка исправлена здесь
 MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 MainFrame.BorderSizePixel = 0
